@@ -9,6 +9,8 @@ AGENTS_DIR="$CREW_HOME/agents"
 TEMPLATE_DIR="$CREW_HOME/template"
 RUN_DIR="$CREW_HOME/.run"
 RESTART_DELAY="${CREW_RESTART_DELAY:-15}"
+# Claude Code nativo si installa in ~/.local/bin, spesso assente dal PATH non interattivo.
+export PATH="$HOME/.local/bin:$PATH"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 
 die() { echo "crewctl: $*" >&2; exit 1; }
