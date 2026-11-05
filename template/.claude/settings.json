@@ -9,11 +9,8 @@
     "allow": [
       "Read",
       "Edit(state/**)",
-      "Write(state/**)",
       "Edit(proposals/**)",
-      "Write(proposals/**)",
       "Edit(memory/**)",
-      "Write(memory/**)",
       "mcp__claude_ai_Gmail__create_draft",
       "mcp__claude_ai_Gmail__update_draft",
       "mcp__gworkspace__draft_gmail_message"
@@ -37,9 +34,7 @@
     ],
     "deny": [
       "Edit(CLAUDE.md)",
-      "Write(CLAUDE.md)",
       "Edit(.claude/**)",
-      "Write(.claude/**)",
       "mcp__claude_ai_Gmail__trash_message",
       "mcp__claude_ai_Gmail__trash_thread",
       "mcp__claude_ai_Gmail__delete_draft",
@@ -55,13 +50,23 @@
     "PreCompact": [
       {
         "matcher": "",
-        "hooks": [{ "type": "command", "command": "{{CREW_HOME}}/lib/hooks/precompact.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{CREW_HOME}}/lib/hooks/precompact.sh"
+          }
+        ]
       }
     ],
     "SessionStart": [
       {
         "matcher": "startup|resume|compact",
-        "hooks": [{ "type": "command", "command": "{{CREW_HOME}}/lib/hooks/session-context.sh" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{CREW_HOME}}/lib/hooks/session-context.sh"
+          }
+        ]
       }
     ]
   }
