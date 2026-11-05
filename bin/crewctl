@@ -68,10 +68,12 @@ cmd__run() {
   cd "$d"
   local mode="${CREW_PERMISSION_MODE:-auto}"
   while true; do
-    local args=(--remote-control "$name" --name "$name" --permission-mode "$mode"
-                --settings "$d/.claude/settings.json")
+    local args=()
     # La regia lavora su tutta la crew (agents/, template/, bin/).
+    # --add-dir accetta più valori: va messo prima delle altre opzioni, altrimenti si mangia il prompt.
     [[ "$name" == "regia" ]] && args+=(--add-dir "$CREW_HOME")
+    args+=(--remote-control "$name" --name "$name" --permission-mode "$mode"
+           --settings "$d/.claude/settings.json")
     if [[ -f "$d/.crew-started" ]]; then
       args+=(--continue)
     else
