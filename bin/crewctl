@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# crewctl — supervisore di Digitiamo Crew.
+# Ogni agente è una sessione Claude Code sempre attiva, in una sessione tmux dedicata,
+# raggiungibile dall'app Claude via Remote Control.
+set -euo pipefail
+
+CREW_HOME="${CREW_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+AGENTS_DIR="$CREW_HOME/agents"
+TEMPLATE_DIR="$CREW_HOME/template"
+RUN_DIR="$CREW_HOME/.run"
+RESTART_DELAY="${CREW_RESTART_DELAY:-15}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+
+die() { echo "crewctl: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "manca '$1' nel PATH"; }
+tmux_name() { echo "crew-$1"; }
+
+valid_name() {
+  [[ "$1" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || die "nome non valido '$1' (minuscole, cifre, trattini)"
+}
+
+agent_dir() {
+  local d
+  if [[ "$1" == "regia" ]]; then d="$CREW_HOME/regia"; else d="$AGENTS_DIR/$1"; fi
+  [[ -d "$d" ]] || die "agente '$1' non trovato"
+  echo "$d"
+}
+
+all_agents() {
+  echo regia
+  [[ -d "$AGENTS_DIR" ]] || return 0
+  find "$AGENTS_DIR" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
+}
+
+is_running() { tmux has-session -t "$(tmux_name "$1")" 2>/dev/null; }
+
+# --- comandi ---------------------------------------------------------------
+
+cmd_new() {
+  local name="${1:-}" role="${2:-}"
+  [[ -n "$name" && -n "$role" ]] || die "uso: crewctl new <nome> \"<compito in una frase>\""
+  valid_name "$name"
+  [[ "$name" != "regia" ]] || die "'regia' è riservato"
+  local d="$AGENTS_DIR/$name"
+  [[ ! -e "$d" ]] || die "esiste già: $d"
+  mkdir -p "$AGENTS_DIR"
+  # agents/ ha un suo repo git locale e privato (fuori dal repo pubblico della crew).
+  [[ -d "$AGENTS_DIR/.git" ]] || git -C "$AGENTS_DIR" init -q
+  cp -R "$TEMPLATE_DIR" "$d"
+  local esc_role; esc_role=$(printf '%s' "$role" | sed -e 's/[\/&|]/\\&/g')
+  find "$d" -type f \( -name '*.md' -o -name '*.json' -o -name '*.yaml' \) -print0 |
+    while IFS= read -r -d '' f; do
+      sed -i.bak -e "s|{{NAME}}|$name|g" -e "s|{{ROLE}}|$esc_role|g" \
+                 -e "s|{{CREW_HOME}}|$CREW_HOME|g" -e "s|{{DATE}}|$(date +%F)|g" "$f"
+      rm -f "$f.bak"
+    done
+  mkdir -p "$d/memory"
+  echo "Creato agente '$name' in $d"
+  echo "Avvialo con: crewctl start $name"
+}
+
+# Ciclo che tiene in vita una sessione: se Claude esce o crasha, riparte con --continue.
+cmd__run() {
+  local name="$1" d; d=$(agent_dir "$name")
+  mkdir -p "$RUN_DIR"
+  cd "$d"
+  local mode="${CREW_PERMISSION_MODE:-auto}"
+  while true; do
+    local args=(--remote-control "$name" --name "$name" --permission-mode "$mode"
+                --settings "$d/.claude/settings.json")
+    # La regia lavora su tutta la crew (agents/, template/, bin/).
+    [[ "$name" == "regia" ]] && args+=(--add-dir "$CREW_HOME")
+    if [[ -f "$d/.crew-started" ]]; then
+      args+=(--continue)
+    else
+      touch "$d/.crew-started"
+      args+=("Sei appena stato avviato. Leggi CLAUDE.md e state/now.md, poi resta in attesa di istruzioni.")
+    fi
+    echo "[$(date '+%F %T')] avvio $name: $CLAUDE_BIN ${args[*]}" >> "$RUN_DIR/$name.log"
+    local rc=0
+    "$CLAUDE_BIN" "${args[@]}" || rc=$?
+    echo "[$(date '+%F %T')] $name terminato (exit $rc), riavvio tra ${RESTART_DELAY}s" >> "$RUN_DIR/$name.log"
+    [[ -f "$RUN_DIR/$name.stop" ]] && { rm -f "$RUN_DIR/$name.stop"; break; }
+    sleep "$RESTART_DELAY"
+  done
+}
+
+cmd_start() {
+  need tmux; need "$CLAUDE_BIN"
+  local targets=("$@"); [[ ${#targets[@]} -gt 0 ]] || die "uso: crewctl start <nome>|--all"
+  [[ "${targets[0]}" == "--all" ]] && mapfile -t targets < <(all_agents)
+  for n in "${targets[@]}"; do
+    agent_dir "$n" >/dev/null
+    if is_running "$n"; then echo "$n: già attivo"; continue; fi
+    rm -f "$RUN_DIR/$n.stop"
+    tmux new-session -d -s "$(tmux_name "$n")" -x 200 -y 50 \
+      "CREW_HOME='$CREW_HOME' '$CREW_HOME/bin/crewctl' _run '$n'"
+    echo "$n: avviato (tmux: $(tmux_name "$n"))"
+  done
+}
+
+cmd_stop() {
+  local targets=("$@"); [[ ${#targets[@]} -gt 0 ]] || die "uso: crewctl stop <nome>|--all"
+  [[ "${targets[0]}" == "--all" ]] && mapfile -t targets < <(all_agents)
+  mkdir -p "$RUN_DIR"
+  for n in "${targets[@]}"; do
+    if is_running "$n"; then
+      touch "$RUN_DIR/$n.stop"
+      tmux kill-session -t "$(tmux_name "$n")"
+      echo "$n: fermato"
+    else
+      echo "$n: non attivo"
+    fi
+  done
+}
+
+cmd_restart() { cmd_stop "$@"; sleep 2; cmd_start "$@"; }
+
+cmd_status() {
+  printf '%-18s %-9s %s\n' AGENTE STATO "IN CORSO (state/now.md)"
+  while read -r n; do
+    local d st now
+    d=$(agent_dir "$n")
+    if is_running "$n"; then st=attivo; else st=fermo; fi
+    now=$(grep -v '^\s*#' "$d/state/now.md" 2>/dev/null | grep -v '^\s*$' | head -1 | cut -c1-70 || true)
+    printf '%-18s %-9s %s\n' "$n" "$st" "${now:--}"
+  done < <(all_agents)
+}
+
+cmd_attach() { need tmux; tmux attach -t "$(tmux_name "${1:?uso: crewctl attach <nome>}")"; }
+cmd_logs()   { tail -n "${2:-50}" "$RUN_DIR/${1:?uso: crewctl logs <nome>}.log"; }
+cmd_list()   { all_agents; }
+
+# Installa un'unità systemd --user che avvia tutta la crew al boot.
+cmd_install_systemd() {
+  local unit_dir="$HOME/.config/systemd/user"
+  mkdir -p "$unit_dir"
+  sed "s|{{CREW_HOME}}|$CREW_HOME|g" "$CREW_HOME/systemd/digitiamo-crew.service" > "$unit_dir/digitiamo-crew.service"
+  systemctl --user daemon-reload
+  systemctl --user enable digitiamo-crew.service
+  echo "Unità installata. Per farla partire al boot senza login:  sudo loginctl enable-linger $USER"
+  echo "Avvio ora:  systemctl --user start digitiamo-crew"
+}
+
+usage() {
+  cat <<EOF
+crewctl — Digitiamo Crew
+
+  new <nome> "<compito>"   crea un agente dal template
+  start <nome>|--all       avvia (tmux + Remote Control, riavvio automatico)
+  stop <nome>|--all        ferma
+  restart <nome>|--all     riavvia
+  status                   stato di tutti gli agenti
+  attach <nome>            entra nella sessione tmux (Ctrl-b d per uscire)
+  logs <nome> [righe]      log del supervisore
+  list                     elenco agenti
+  install-systemd          avvio automatico al boot (Linux)
+EOF
+}
+
+case "${1:-}" in
+  new) shift; cmd_new "$@" ;;
+  _run) shift; cmd__run "$@" ;;
+  start) shift; cmd_start "$@" ;;
+  stop) shift; cmd_stop "$@" ;;
+  restart) shift; cmd_restart "$@" ;;
+  status) cmd_status ;;
+  attach) shift; cmd_attach "$@" ;;
+  logs) shift; cmd_logs "$@" ;;
+  list) cmd_list ;;
+  install-systemd) cmd_install_systemd ;;
+  ""|-h|--help|help) usage ;;
+  *) die "comando sconosciuto: $1 (crewctl help)" ;;
+esac

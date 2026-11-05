@@ -1,0 +1,9 @@
+# Runtime del supervisore
+.run/
+agents/*/.crew-started
+regia/.crew-started
+.DS_Store
+# Gli agenti reali contengono dati personali e di clienti: restano solo sul server.
+agents/*
+!agents/.gitkeep
+regia/state/journal/*.md

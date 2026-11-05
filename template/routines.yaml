@@ -1,0 +1,11 @@
+# Routine di questo agente. La regia le legge e, all'ora indicata, manda
+# all'agente il messaggio "esegui la routine <nome>".
+# cron: minuto ora giorno-mese mese giorno-settimana (fuso Europe/Rome)
+timezone: Europe/Rome
+routines:
+  - name: riflessione
+    cron: "0 21 * * 1-5"
+    prompt: "esegui la routine riflessione"
+  # - name: brief-mattina
+  #   cron: "30 8 * * 1-5"
+  #   prompt: "Prepara il brief della giornata: calendario di oggi, mail importanti non lette, task in scadenza. Solo bozza, niente invii."

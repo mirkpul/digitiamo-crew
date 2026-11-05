@@ -1,0 +1,9 @@
+# Routine della regia stessa.
+timezone: Europe/Rome
+routines:
+  - name: riarma
+    cron: "5 0 * * *"
+    prompt: "/crew riarma"
+  - name: evolvi
+    cron: "0 9 * * 6"
+    prompt: "/crew evolvi"

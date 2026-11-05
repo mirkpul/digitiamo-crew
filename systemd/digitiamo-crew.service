@@ -1,0 +1,15 @@
+[Unit]
+Description=Digitiamo Crew - agenti Claude Code sempre attivi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=CREW_HOME={{CREW_HOME}}
+Environment=PATH=%h/.local/bin:%h/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart={{CREW_HOME}}/bin/crewctl start --all
+ExecStop={{CREW_HOME}}/bin/crewctl stop --all
+
+[Install]
+WantedBy=default.target
